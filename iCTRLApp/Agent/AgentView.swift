@@ -23,6 +23,13 @@ struct AgentView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
+                NavigationLink {
+                    VoiceSettingsView()
+                } label: {
+                    Image(systemName: "speaker.wave.2")
+                }
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
                     Button("会話を消す", role: .destructive) { session.clearConversation() }
                         .disabled(session.isRunning)

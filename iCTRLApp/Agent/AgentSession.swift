@@ -53,6 +53,7 @@ final class AgentSession: ObservableObject {
         voice.onUtterance = { [weak self] text in self?.handleUtterance(text) }
         voice.onStopWord = { [weak self] in self?.handleStopWord() }
         voice.onFailure = { [weak self] message in self?.fail(message, spoken: message) }
+        voice.onNotice = { [weak self] message in self?.noteOnce(message) }
         // 画面は session だけを見るので、音声の状態の変化もここから流す。
         voiceChanges = voice.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
     }
@@ -344,6 +345,12 @@ final class AgentSession: ObservableObject {
 
     private func note(_ text: String) {
         entries.append(Entry(role: .notice, text: text))
+    }
+
+    /// 同じ知らせを、直前と続けて出さない（読み上げの失敗が文ごとに並ばないように）。
+    private func noteOnce(_ text: String) {
+        if entries.last?.text == text { return }
+        note(text)
     }
 
     /// 画面には詳細を、声には短い日本語を出す。
