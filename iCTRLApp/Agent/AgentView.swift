@@ -23,6 +23,9 @@ struct AgentView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
+                RoutePicker().frame(width: 28, height: 28)
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
                 NavigationLink {
                     VoiceSettingsView()
                 } label: {

@@ -36,6 +36,16 @@ struct VoiceSettingsView: View {
                 Text("キーが無いときは iOS の声で読み上げます。キーはこの端末の Keychain にだけ保存します。")
             }
 
+            Section {
+                HStack {
+                    Text("音声の出力先")
+                    Spacer()
+                    RoutePicker().frame(width: 32, height: 32)
+                }
+            } footer: {
+                Text("AirPods、Bluetooth スピーカー、本体のスピーカー、AirPlay から選べます。")
+            }
+
             if hasKey {
                 Section("モデル") {
                     Picker("モデル", selection: $model) {

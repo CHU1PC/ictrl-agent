@@ -259,9 +259,12 @@ final class VoiceIO: NSObject, ObservableObject {
         }
     }
 
+    /// 音声セッションの設定。出力先は、本体のスピーカー、受話口、Bluetooth、AirPlay から選べるようにする。
     /// voiceChat はエコーキャンセルが効くので、読み上げをマイクが拾いにくい。
     private static func configureSession(_ session: AVAudioSession) throws {
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker])
+        var options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .allowAirPlay]
+        if #available(iOS 26.0, *) { options.insert(.bluetoothHighQualityRecording) }
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
     }
 
     private func installTap() {
