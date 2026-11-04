@@ -50,6 +50,14 @@ struct SettingsView: View {
 
     var body: some View {
         List {
+            Section {
+                NavigationLink {
+                    AgentView()
+                } label: {
+                    Label("音声エージェント", systemImage: "waveform.circle")
+                }
+            }
+
             requirementsSection
 
             // Fallback only. The in-app mount above does the same job without
