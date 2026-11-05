@@ -107,21 +107,11 @@ struct GeminiTTS {
                         for try await line in bytes.lines { body += line; if body.count > 300 { break } }
                         throw Failure.http(status, body)
                     }
-                    var received = false
-                    // Server-Sent Events。音声は step.delta の delta.data に base64 で入っている。
+                    var parser = SSEAudioParser()
                     for try await line in bytes.lines {
-                        guard line.hasPrefix("data:"),
-                              let json = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any] else { continue }
-                        if let error = json["error"] as? [String: Any] {
-                            throw Failure.http(status, error["message"] as? String ?? "stream error")
-                        }
-                        guard json["event_type"] as? String == "step.delta",
-                              let delta = json["delta"] as? [String: Any], delta["type"] as? String == "audio",
-                              let base64 = delta["data"] as? String, let pcm = Data(base64Encoded: base64) else { continue }
-                        received = true
-                        continuation.yield(pcm)
+                        for pcm in try parser.feed(line) { continuation.yield(pcm) }
                     }
-                    if !received { throw Failure.noAudio }
+                    if !parser.receivedAudio { throw Failure.noAudio }
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -153,30 +143,5 @@ struct GeminiTTS {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         return request
-    }
-
-    /// 読み上げる文を、1文ずつに分ける。短すぎる断片は前の文につなげる。
-    static func sentences(_ text: String) -> [String] {
-        var result: [String] = []
-        var current = ""
-        for character in text {
-            current.append(character)
-            if "。！？!?\n".contains(character) {
-                append(&result, current)
-                current = ""
-            }
-        }
-        append(&result, current)
-        return result
-    }
-
-    private static func append(_ result: inout [String], _ piece: String) {
-        let trimmed = piece.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        if trimmed.count < 6, let last = result.popLast() {
-            result.append(last + trimmed)
-        } else {
-            result.append(trimmed)
-        }
     }
 }

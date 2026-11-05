@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Speech
 
 /// ハンズフリーの音声入出力。
@@ -12,7 +13,6 @@ final class VoiceIO: NSObject, ObservableObject {
     enum Mode { case off, keepAlive, listening }
 
     @Published private(set) var mode: Mode = .off
-    @Published private(set) var isSpeaking = false
     @Published private(set) var partialText = ""
 
     var isListening: Bool { mode == .listening }
@@ -28,30 +28,20 @@ final class VoiceIO: NSObject, ObservableObject {
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "ja-JP"))
     private let engine = AVAudioEngine()
-    private let synthesizer = AVSpeechSynthesizer()
+    /// 読み上げ。音声セッションの開け閉めは、このクラスが受け持つ。
+    let output = SpeechOutput()
+    var isSpeaking: Bool { output.isSpeaking }
     private let sink = BufferSink()
     private var task: SFSpeechRecognitionTask?
     private var silenceTimer: Timer?
     private var retryWork: DispatchWorkItem?
-    /// 読み上げ待ちの文。Gemini の分は、前の文を再生している間に先に作っておく。
-    private enum SpeechItem {
-        case gemini(String, AsyncThrowingStream<Data, Error>)
-        case system(String)
+    /// 読み上げに Gemini を使えなかったときなどの知らせ。
+    var onNotice: ((String) -> Void)? {
+        get { output.onNotice }
+        set { output.onNotice = newValue }
     }
-    private var speechQueue: [SpeechItem] = []
-    private var playingItem = false
-    private var speechGeneration = 0
-    /// Gemini の PCM を再生する。聞き取り用のエンジンとは分けておく。
-    private let playbackEngine = AVAudioEngine()
-    private let playerNode = AVAudioPlayerNode()
-    private let pcmFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: GeminiTTS.sampleRate, channels: 1, interleaved: false)!
-    private var playbackConnected = false
-    /// 今の文で、まだ再生し終えていない断片の数と、受信が終わったか。
-    private var pendingBuffers = 0
-    private var streamFinished = false
-    private var usingSystemVoice = false
-    /// 読み上げに Gemini を使えなかったとき（iOS の声に切り替えて続ける）。
-    var onNotice: ((String) -> Void)?
+    private var outputChanges: AnyCancellable?
+    private var pendingRestart: DispatchWorkItem?
     /// 認識タスクの世代。閉じた古いタスクのコールバックが新しいタスクを止めないようにする。
     private var generation = 0
     private var consecutiveFailures = 0
@@ -61,8 +51,19 @@ final class VoiceIO: NSObject, ObservableObject {
 
     override init() {
         super.init()
-        synthesizer.delegate = self
         observeAudioSession()
+        // 聞き取りをしていないとき（試聴など）は、再生のためだけにセッションを開け閉めする。
+        output.prepareSession = { [weak self] in
+            guard let self, self.mode == .off else { return }
+            let session = AVAudioSession.sharedInstance()
+            try Self.configureSession(session)
+            try session.setActive(true)
+        }
+        output.onIdle = { [weak self] in
+            guard let self, self.mode == .off else { return }
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+        outputChanges = output.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
     func requestPermissions() async -> Bool {
@@ -100,6 +101,8 @@ final class VoiceIO: NSObject, ObservableObject {
     func stopAll() {
         endRecognition(emit: false, restart: false)
         retryWork?.cancel()
+        pendingRestart?.cancel()
+        pendingRestart = nil
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         stopSpeaking()
@@ -112,133 +115,11 @@ final class VoiceIO: NSObject, ObservableObject {
     func speak(_ text: String, using tts: GeminiTTS? = GeminiTTS.configured()) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        if let tts {
-            // 全部の文の通信をここで始める。再生の順番が来るまで、届いた断片は溜めておかれる。
-            for sentence in GeminiTTS.sentences(trimmed) {
-                speechQueue.append(.gemini(sentence, tts.stream(sentence)))
-            }
-        } else {
-            speechQueue.append(.system(trimmed))
-        }
-        isSpeaking = true
-        if !playingItem { playNext() }
+        output.speak(trimmed, using: tts)
     }
 
     func stopSpeaking() {
-        speechGeneration += 1
-        // 溜めているストリームを捨てると、その通信も止まる。
-        speechQueue.removeAll()
-        playingItem = false
-        pendingBuffers = 0
-        streamFinished = false
-        usingSystemVoice = false
-        playerNode.stop()
-        synthesizer.stopSpeaking(at: .immediate)
-        isSpeaking = false
-    }
-
-    private func playNext() {
-        guard !speechQueue.isEmpty else {
-            playingItem = false
-            isSpeaking = false
-            return
-        }
-        playingItem = true
-        pendingBuffers = 0
-        streamFinished = false
-        usingSystemVoice = false
-        let item = speechQueue.removeFirst()
-        switch item {
-        case .system(let text):
-            speakWithSystemVoice(text)
-        case .gemini(let text, let stream):
-            let generation = speechGeneration
-            Task { @MainActor in await self.play(stream, text: text, generation: generation) }
-        }
-    }
-
-    private func play(_ stream: AsyncThrowingStream<Data, Error>, text: String, generation: Int) async {
-        var played = false
-        do {
-            try startPlayback()
-            for try await pcm in stream {
-                guard generation == speechGeneration else { return }
-                guard let buffer = makeBuffer(pcm) else { continue }
-                played = true
-                pendingBuffers += 1
-                playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-                    Task { @MainActor in self?.bufferPlayed(generation: generation) }
-                }
-                if !playerNode.isPlaying { playerNode.play() }
-            }
-        } catch {
-            guard generation == speechGeneration else { return }
-            if !played {
-                onNotice?("Gemini の声を使えなかったので、iOS の声で読み上げます: \(error.localizedDescription)")
-                return speakWithSystemVoice(text)
-            }
-        }
-        guard generation == speechGeneration else { return }
-        streamFinished = true
-        if pendingBuffers == 0 { itemFinished() }
-    }
-
-    private func bufferPlayed(generation: Int) {
-        guard generation == speechGeneration, !usingSystemVoice else { return }
-        pendingBuffers = max(0, pendingBuffers - 1)
-        if pendingBuffers == 0, streamFinished { itemFinished() }
-    }
-
-    private func startPlayback() throws {
-        let session = AVAudioSession.sharedInstance()
-        if mode == .off {
-            // 試聴など、聞き取りをしていないときも再生できるようにする。
-            try Self.configureSession(session)
-            try session.setActive(true)
-        }
-        if !playbackConnected {
-            playbackEngine.attach(playerNode)
-            playbackEngine.connect(playerNode, to: playbackEngine.mainMixerNode, format: pcmFormat)
-            playbackConnected = true
-        }
-        if !playbackEngine.isRunning {
-            playbackEngine.prepare()
-            try playbackEngine.start()
-        }
-    }
-
-    /// 16bit の PCM（リトルエンディアン）を、再生用の Float32 のバッファにする。
-    private func makeBuffer(_ pcm: Data) -> AVAudioPCMBuffer? {
-        let frames = pcm.count / 2
-        guard frames > 0, let buffer = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: AVAudioFrameCount(frames)),
-              let channel = buffer.floatChannelData?[0] else { return nil }
-        pcm.withUnsafeBytes { raw in
-            for i in 0..<frames {
-                let sample = Int16(littleEndian: raw.loadUnaligned(fromByteOffset: i * 2, as: Int16.self))
-                channel[i] = Float(sample) / 32768
-            }
-        }
-        buffer.frameLength = AVAudioFrameCount(frames)
-        return buffer
-    }
-
-    private func speakWithSystemVoice(_ text: String) {
-        usingSystemVoice = true
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "ja-JP")
-        synthesizer.speak(utterance)
-    }
-
-    /// 1つの文を読み終えたら、次へ進む。止めた後に遅れて届いた通知では進めない。
-    private func itemFinished() {
-        guard playingItem else { return }
-        playNext()
-    }
-
-    /// iOS の声の読み上げが終わったとき。
-    private func systemSpeechFinished() {
-        guard playingItem, usingSystemVoice, !synthesizer.isSpeaking else { return }
-        itemFinished()
+        output.stop()
     }
 
     // MARK: - Engine
@@ -260,11 +141,22 @@ final class VoiceIO: NSObject, ObservableObject {
     }
 
     /// 音声セッションの設定。出力先は、本体のスピーカー、受話口、Bluetooth、AirPlay から選べるようにする。
+    /// 組み合わせによって受け付けられないことがあるので、オプションを減らしながら試す。
     /// voiceChat はエコーキャンセルが効くので、読み上げをマイクが拾いにくい。
-    private static func configureSession(_ session: AVAudioSession) throws {
-        var options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .allowAirPlay]
-        if #available(iOS 26.0, *) { options.insert(.bluetoothHighQualityRecording) }
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
+    static func configureSession(_ session: AVAudioSession) throws {
+        var full: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .allowAirPlay]
+        if #available(iOS 26.0, *) { full.insert(.bluetoothHighQualityRecording) }
+        let attempts: [AVAudioSession.CategoryOptions] = [full, [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP], [.defaultToSpeaker]]
+        var lastError: Error?
+        for options in attempts {
+            do {
+                try session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
+                return
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError!
     }
 
     private func installTap() {
@@ -284,8 +176,20 @@ final class VoiceIO: NSObject, ObservableObject {
     private func restartEngine() {
         let previous = mode
         guard previous != .off else { return }
-        // 作り直しそのものが設定変更の通知を呼ぶことがあるので、続けて来たものは捨てる。
-        if let last = lastRestart, Date().timeIntervalSince(last) < 1 { return }
+        // 作り直しそのものが設定変更の通知を呼ぶことがある。1秒以内に続けて来たものは、
+        // 捨てずに1秒後にまとめて1回やり直す（本当の2回目の変化を取りこぼさないため）。
+        if let last = lastRestart, Date().timeIntervalSince(last) < 1 {
+            if pendingRestart == nil {
+                let work = DispatchWorkItem { [weak self] in
+                    self?.pendingRestart = nil
+                    self?.lastRestart = nil
+                    self?.restartEngine()
+                }
+                pendingRestart = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+            }
+            return
+        }
         lastRestart = Date()
         endRecognition(emit: false, restart: false)
         engine.inputNode.removeTap(onBus: 0)
@@ -440,16 +344,6 @@ final class VoiceIO: NSObject, ObservableObject {
         return await withCheckedContinuation { continuation in
             AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }
         }
-    }
-}
-
-extension VoiceIO: AVSpeechSynthesizerDelegate {
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.systemSpeechFinished() }
-    }
-
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.systemSpeechFinished() }
     }
 }
 

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// ランナーの RPC を Claude のツール定義に変換し、ツール結果を API の形に整える。

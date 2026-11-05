@@ -2,7 +2,9 @@ import SwiftUI
 
 /// 読み上げの声の設定。Gemini の API キー、モデル、声を選び、その場で試聴する。
 struct VoiceSettingsView: View {
-    @ObservedObject private var session = AgentSession.shared
+    /// 聞き取りの途中経過のたびに一覧を描き直さないよう、観察はしない。
+    private var voiceIO: VoiceIO { AgentSession.shared.voice }
+    @State private var previewed = false
     @State private var keyDraft = ""
     @State private var hasKey = GeminiTTS.storedKey() != nil
     @State private var model = GeminiTTS.selectedModel
@@ -86,18 +88,20 @@ struct VoiceSettingsView: View {
                 } header: {
                     Text("声")
                 } footer: {
-                    Text("▶ で試聴します。1回ごとに Gemini の料金がかかります（1回あたり 1 円未満）。")
+                    Text("▶ で試聴します。試聴のたびに Gemini の料金がかかります。")
                 }
             }
         }
         .navigationTitle("声の設定")
         .navigationBarTitleDisplayMode(.inline)
-        .onDisappear { session.voice.stopSpeaking() }
+        // 試聴したときだけ止める。エージェントの読み上げ（確認の質問など）は止めない。
+        .onDisappear { if previewed { voiceIO.stopSpeaking() } }
     }
 
     private func preview(_ name: String) {
         guard let key = GeminiTTS.storedKey() else { return }
-        session.voice.stopSpeaking()
-        session.voice.speak(Self.sample, using: GeminiTTS(apiKey: key, model: model, voice: name))
+        previewed = true
+        voiceIO.stopSpeaking()
+        voiceIO.speak(Self.sample, using: GeminiTTS(apiKey: key, model: model, voice: name))
     }
 }

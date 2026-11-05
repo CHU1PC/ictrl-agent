@@ -107,7 +107,7 @@ final class AgentSession: ObservableObject {
 
     func handleUtterance(_ text: String) {
         if pendingConfirmation != nil {
-            switch Self.interpretAnswer(text) {
+            switch ConfirmationAnswer.interpret(text) {
             case .some(let approved): answerConfirmation(approved)
             case .none: voice.speak("はいか、いいえで答えてください。")
             }
@@ -179,17 +179,6 @@ final class AgentSession: ObservableObject {
         messages.removeAll()
         entries.removeAll()
         guardrail = RiskGuard()
-    }
-
-    /// 確認への答えを読む。否定を含めば必ず拒否、肯定は短い発話に限る。分からなければ nil。
-    static func interpretAnswer(_ text: String) -> Bool? {
-        let t = text.lowercased().filter { !$0.isWhitespace && !$0.isPunctuation }
-        let negations = ["ない", "ません", "いいえ", "いや", "だめ", "ダメ", "やめ", "止め", "とめ", "待って", "まって",
-                         "ストップ", "キャンセル", "ノー", "no", "中止", "結構"]
-        if negations.contains(where: { t.contains($0) }) { return false }
-        guard t.count <= 12 else { return nil }
-        let affirmations = ["はい", "いいよ", "お願い", "おねがい", "オッケー", "ok", "うん", "どうぞ", "yes", "実行して", "進めて", "やって"]
-        return affirmations.contains(where: { t.contains($0) }) ? true : nil
     }
 
     // MARK: - Agent loop
