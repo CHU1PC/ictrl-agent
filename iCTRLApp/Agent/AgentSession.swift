@@ -58,6 +58,7 @@ final class AgentSession: ObservableObject {
     /// 途中で変えると、キャッシュが外れるうえ、思考ブロックの検証で拒否されることがある。
     private struct Conversation {
         let config: AnthropicClient.Config
+        let approval: ApprovalMode
         let tools: [[String: Any]]
         let system: [[String: Any]]
     }
@@ -286,13 +287,21 @@ final class AgentSession: ObservableObject {
     }
 
     private func execute(id: String, name: String, input: [String: Any]) async -> [String: Any] {
+        let approval = conversation?.approval ?? .ask
         if name == AgentTools.confirmToolName {
             let summary = input["summary"] as? String ?? "この操作"
-            let approved = await askConfirmation(summary)
+            let approved: Bool
+            if approval.needsUser(summary) {
+                approved = await askConfirmation(summary)
+            } else {
+                approved = true
+                note("自動で承認：\(summary)")
+            }
             if approved { guardrail.approve() } else { guardrail.revoke() }
             return toolResult(id: id, text: AgentTools.jsonText(["approved": approved]), isError: false)
         }
-        if let reason = guardrail.blockReason(method: name, input: input) {
+        // 全部自動のときは、確認のための往復を挟まない。
+        if approval != .automatic, let reason = guardrail.blockReason(method: name, input: input) {
             entries.append(Entry(role: .notice, text: "確認なしの危険な操作を止めました"))
             return toolResult(id: id, text: reason, isError: true)
         }
@@ -419,6 +428,11 @@ final class AgentSession: ObservableObject {
     If a tool result says Blocked, call confirm_with_user before trying again.
     """
 
+    private static let automaticInstructions = """
+    The user has turned on automatic approval, so carry out sends, posts and setting changes without asking. \
+    Still say in one sentence what you are about to send or change before you do it.
+    """
+
     private static let commonRules = """
     Never type passwords, passcodes, or payment details; ask the user to enter them by hand. \
     If the request is ambiguous, ask the user instead of guessing. When the task is done, say so in one sentence.
@@ -429,13 +443,17 @@ final class AgentSession: ObservableObject {
 
     /// 会話の最初に、その時点の設定とメモで、ツールとシステムプロンプトを組み立てる。
     private static func makeConversation() -> Conversation {
-        let tools = AgentTools.definitions
-        var text = baseInstructions + "\n" + confirmInstructions + "\n" + commonRules
+        let approval = ApprovalMode.stored
+        var tools = AgentTools.definitions
+        if approval == .automatic {
+            tools.removeAll { $0["name"] as? String == AgentTools.confirmToolName }
+        }
+        var text = baseInstructions + "\n" + (approval == .automatic ? automaticInstructions : confirmInstructions) + "\n" + commonRules
         if let url = Bundle.main.url(forResource: "SKILL", withExtension: "md"),
            let manual = try? String(contentsOf: url, encoding: .utf8) {
             text += "\n\n" + manual
         }
         let system: [[String: Any]] = [["type": "text", "text": text]]
-        return Conversation(config: .stored, tools: tools, system: system)
+        return Conversation(config: .stored, approval: approval, tools: tools, system: system)
     }
 }

@@ -12,6 +12,7 @@ struct VoiceSettingsView: View {
     @State private var voice = GeminiTTS.selectedVoice
     @State private var systemRate = SpeechOutput.systemRate
     @State private var claude = AnthropicClient.Config.stored
+    @State private var approval = ApprovalMode.stored
 
     private static let sample = "設定アプリを開いて、Wi-Fi の画面を表示しました。ほかに何かしますか？"
 
@@ -28,6 +29,17 @@ struct VoiceSettingsView: View {
                 Text("速さ優先は、考える量を減らして返事を速くします。操作に失敗しやすいときは切ってください。変更は次の会話（「会話を消す」の後）から効きます。")
             }
             .onChange(of: claude) { AnthropicClient.Config.stored = $0 }
+
+            Section {
+                Picker("確認", selection: $approval) {
+                    ForEach(ApprovalMode.allCases) { Text($0.title).tag($0) }
+                }
+                .onChange(of: approval) { ApprovalMode.stored = $0 }
+            } header: {
+                Text("操作の確認")
+            } footer: {
+                Text("全部自動では、送信、購入、削除も確認なしで実行します。誤操作を止められないので、支払いのできるアプリを使うときは「支払いと削除だけ聞く」にしてください。変更は次の会話から効きます。")
+            }
 
             Section {
                 if hasKey {

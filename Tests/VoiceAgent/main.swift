@@ -55,4 +55,11 @@ for label in ["Posts", "Orders", "Display", "Wi-Fi", "Settings"] {
     check(!RiskGuard.isRiskyLabel(label), "not risky \(label)")
 }
 
+// Approval modes: the middle mode asks only for payments and deletions.
+check(ApprovalMode.ask.needsUser("メッセージを送信します"), "ask always asks")
+check(!ApprovalMode.automatic.needsUser("商品を購入します"), "automatic never asks")
+check(ApprovalMode.askForPaymentsAndDeletes.needsUser("Amazon で商品を購入します"), "purchase asks")
+check(ApprovalMode.askForPaymentsAndDeletes.needsUser("写真を削除します"), "delete asks")
+check(!ApprovalMode.askForPaymentsAndDeletes.needsUser("母に LINE でメッセージを送信します"), "send is automatic")
+
 print("VoiceAgent: \(checks) checks passed")

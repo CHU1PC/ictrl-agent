@@ -9,6 +9,7 @@ swiftc -module-cache-path "$tmp/module-cache" \
     "$root/iCTRLKit/BuildStamp.swift" \
     "$root/iCTRLApp/Agent/SpeechText.swift" \
     "$root/iCTRLApp/Agent/AgentTools.swift" \
+    "$root/iCTRLApp/Agent/ApprovalMode.swift" \
     "$root/Tests/VoiceAgent/main.swift" \
     -o "$tmp/voice-agent-tests"
 "$tmp/voice-agent-tests"
@@ -21,4 +22,5 @@ wired iCTRLApp/Agent/GeminiTTS.swift 'try parser.feed(line)'
 wired iCTRLApp/Agent/SpeechOutput.swift 'decoder.samples(chunk)'
 wired iCTRLApp/Agent/SpeechOutput.swift 'SpeechText.sentences(text)'
 wired iCTRLApp/Agent/AgentSession.swift 'ConfirmationAnswer.interpret(text)'
+wired iCTRLApp/Agent/AgentSession.swift 'approval.needsUser(summary)'
 echo "VoiceAgent: call sites wired"
