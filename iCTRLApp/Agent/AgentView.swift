@@ -3,6 +3,8 @@ import SwiftUI
 /// 音声エージェントの画面。会話のログ、聞き取りの切り替え、確認の応答を置く。
 struct AgentView: View {
     @ObservedObject private var session = AgentSession.shared
+    @ObservedObject private var bootstrap = AppBootstrap.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var keyDraft = ""
     @State private var editingKey = false
     @State private var typed = ""
@@ -11,6 +13,7 @@ struct AgentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            BootstrapBanner(bootstrap: bootstrap)
             if !session.hasAPIKey || editingKey {
                 apiKeyForm
             } else if !session.runnerPaired {
@@ -19,9 +22,16 @@ struct AgentView: View {
             transcript
             controls
         }
-        .navigationTitle("音声エージェント")
+        .navigationTitle("iPhone Use")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                NavigationLink {
+                    SettingsView()
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 RoutePicker().frame(width: 28, height: 28)
             }
@@ -42,6 +52,11 @@ struct AgentView: View {
                     Image(systemName: "ellipsis.circle")
                 }
             }
+        }
+        // 開いたとき、戻ってきたときに、DDI とランナーを自動で整える。
+        .task { await bootstrap.ensureReady() }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { Task { await bootstrap.ensureReady() } }
         }
         .alert("この操作を実行しますか？",
                isPresented: Binding(get: { session.pendingConfirmation != nil }, set: { _ in })) {

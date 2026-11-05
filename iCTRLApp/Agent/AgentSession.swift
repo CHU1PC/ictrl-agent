@@ -184,6 +184,11 @@ final class AgentSession: ObservableObject {
     // MARK: - Agent loop
 
     private func run(client: AnthropicClient) async {
+        // ランナーが止まっていたら起こす。再起動の後なら DDI のマウントからやり直す。
+        guard await AppBootstrap.shared.ensureReady() else {
+            isRunning = false
+            return fail("iPhone を操作する準備ができていません。画面の上の案内を見てください。", spoken: "操作の準備ができていません。")
+        }
         beginKeepAlive()
         defer {
             isRunning = false
