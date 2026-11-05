@@ -7,7 +7,7 @@ import Speech
 /// マイクは会話中ずっと開けたままにする。これが UIBackgroundModes の audio と
 /// 合わさって、エージェントが他のアプリを操作している間もこのアプリを生かす。
 /// 読み上げ中も聞き取りは続けるが、停止語だけを受け付けて、それ以外は捨てる
-/// （voiceChat のエコーキャンセルで、自分の声はほぼ拾わない）。
+/// （エコーキャンセルが無いので、自分の読み上げを指示として拾わないため）。
 @MainActor
 final class VoiceIO: NSObject, ObservableObject {
     enum Mode { case off, keepAlive, listening }
@@ -142,7 +142,9 @@ final class VoiceIO: NSObject, ObservableObject {
 
     /// 音声セッションの設定。出力先は、本体のスピーカー、受話口、Bluetooth、AirPlay から選べるようにする。
     /// 組み合わせによって受け付けられないことがあるので、オプションを減らしながら試す。
-    /// voiceChat はエコーキャンセルが効くので、読み上げをマイクが拾いにくい。
+    /// モードは voiceChat にしない。voiceChat だと Bluetooth は通話用（HFP）に限られ、
+    /// マイクの無い Bluetooth スピーカーや AirPlay が出力先の候補に出ない。
+    /// その代わりエコーキャンセルは効かないので、読み上げ中は停止語だけを受け付けて補う。
     static func configureSession(_ session: AVAudioSession) throws {
         var full: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .allowAirPlay]
         if #available(iOS 26.0, *) { full.insert(.bluetoothHighQualityRecording) }
@@ -150,7 +152,7 @@ final class VoiceIO: NSObject, ObservableObject {
         var lastError: Error?
         for options in attempts {
             do {
-                try session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
+                try session.setCategory(.playAndRecord, mode: .default, options: options)
                 return
             } catch {
                 lastError = error
