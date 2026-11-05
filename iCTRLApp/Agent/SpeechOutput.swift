@@ -16,6 +16,8 @@ final class SpeechOutput: NSObject, ObservableObject {
     var prepareSession: (() throws -> Void)?
     /// 読み上げがすべて終わったとき、または止めたとき。
     var onIdle: (() -> Void)?
+    /// 文ごとの時間の計測結果（遅さの切り分け用）。
+    var onTiming: ((String) -> Void)?
 
     /// 再生中の文に加えて、先に頼んでおく文の数。
     private static let lookahead = 2
@@ -24,6 +26,8 @@ final class SpeechOutput: NSObject, ObservableObject {
         let text: String
         let tts: GeminiTTS?
         private(set) var stream: AsyncThrowingStream<Data, Error>?
+        /// Gemini に頼んだ時刻。
+        private(set) var requestedAt: Date?
 
         init(text: String, tts: GeminiTTS?) {
             self.text = text
@@ -31,7 +35,10 @@ final class SpeechOutput: NSObject, ObservableObject {
         }
 
         func start() {
-            if stream == nil, let tts { stream = tts.stream(text) }
+            if stream == nil, let tts {
+                requestedAt = Date()
+                stream = tts.stream(text)
+            }
         }
     }
 
@@ -104,7 +111,7 @@ final class SpeechOutput: NSObject, ObservableObject {
                 job.start()
                 prefetch()
                 if let stream = job.stream {
-                    switch await play(stream, generation: generation) {
+                    switch await play(stream, job: job, generation: generation) {
                     case .played:
                         break
                     case .failedBeforeAudio(let error):
@@ -131,14 +138,27 @@ final class SpeechOutput: NSObject, ObservableObject {
         onIdle?()
     }
 
-    private func play(_ stream: AsyncThrowingStream<Data, Error>, generation: Int) async -> Outcome {
+    private func play(_ stream: AsyncThrowingStream<Data, Error>, job: Job, generation: Int) async -> Outcome {
         var decoder = PCMDecoder()
         var played = false
+        let turn = Date()
+        var firstChunk: Date?
+        var sampleCount = 0
         do {
             for try await chunk in stream {
                 guard generation == self.generation else { return .played }
+                if firstChunk == nil { firstChunk = Date() }
                 let samples = decoder.samples(chunk)
+                sampleCount += samples.count
                 if !samples.isEmpty, schedule(samples) { played = true }
+            }
+            if let requested = job.requestedAt, let first = firstChunk {
+                // 受信が音声の長さより長ければ、生成が再生に追いつかず、途中で音が途切れている。
+                let audio = Double(sampleCount) / GeminiTTS.sampleRate
+                let waited = max(0, first.timeIntervalSince(turn))
+                onTiming?(String(format: "声: 最初の音まで %.1f秒（順番が来てから %.1f秒待ち）、受信 %.1f秒 / 音声 %.1f秒「%@」",
+                                 first.timeIntervalSince(requested), waited, Date().timeIntervalSince(requested), audio,
+                                 String(job.text.prefix(12))))
             }
             return played ? .played : .failedBeforeAudio(GeminiTTS.Failure.noAudio)
         } catch {
@@ -237,9 +257,21 @@ final class SpeechOutput: NSObject, ObservableObject {
 
     // MARK: - System voice
 
+    private static let systemRateKey = "agent.system.rate"
+
+    /// iOS の声の話す速さ（AVSpeechUtterance の rate。0 が最も遅く、1 が最も速い）。
+    static var systemRate: Float {
+        get {
+            let stored = UserDefaults.standard.object(forKey: systemRateKey) as? Float
+            return stored ?? AVSpeechUtteranceDefaultSpeechRate
+        }
+        set { UserDefaults.standard.set(newValue, forKey: systemRateKey) }
+    }
+
     private func speakWithSystemVoice(_ text: String) async {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "ja-JP")
+        utterance.rate = Self.systemRate
         isSpeaking = true
         await withCheckedContinuation { continuation in
             systemSpeech = (utterance, continuation)

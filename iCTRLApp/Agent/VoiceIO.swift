@@ -40,6 +40,10 @@ final class VoiceIO: NSObject, ObservableObject {
         get { output.onNotice }
         set { output.onNotice = newValue }
     }
+    var onTiming: ((String) -> Void)? {
+        get { output.onTiming }
+        set { output.onTiming = newValue }
+    }
     private var outputChanges: AnyCancellable?
     private var pendingRestart: DispatchWorkItem?
     /// 認識タスクの世代。閉じた古いタスクのコールバックが新しいタスクを止めないようにする。

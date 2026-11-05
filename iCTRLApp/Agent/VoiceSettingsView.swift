@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 
 /// 読み上げの声の設定。Gemini の API キー、モデル、声を選び、その場で試聴する。
@@ -9,11 +10,25 @@ struct VoiceSettingsView: View {
     @State private var hasKey = GeminiTTS.storedKey() != nil
     @State private var model = GeminiTTS.selectedModel
     @State private var voice = GeminiTTS.selectedVoice
+    @State private var systemRate = SpeechOutput.systemRate
+    @State private var claude = AnthropicClient.Config.stored
 
     private static let sample = "設定アプリを開いて、Wi-Fi の画面を表示しました。ほかに何かしますか？"
 
     var body: some View {
         List {
+            Section {
+                Picker("モデル", selection: $claude.model) {
+                    ForEach(AnthropicClient.Model.allCases) { Text($0.title).tag($0) }
+                }
+                Toggle("速さ優先", isOn: $claude.fast)
+            } header: {
+                Text("Claude")
+            } footer: {
+                Text("速さ優先は、考える量を減らして返事を速くします。操作に失敗しやすいときは切ってください。変更は次の会話（「会話を消す」の後）から効きます。")
+            }
+            .onChange(of: claude) { AnthropicClient.Config.stored = $0 }
+
             Section {
                 if hasKey {
                     Label("Gemini の API キーを保存済み", systemImage: "checkmark.seal")
@@ -36,6 +51,33 @@ struct VoiceSettingsView: View {
                 Text("Gemini の声")
             } footer: {
                 Text("キーが無いときは iOS の声で読み上げます。キーはこの端末の Keychain にだけ保存します。")
+            }
+
+            Section {
+                VStack(alignment: .leading) {
+                    Text("話す速さ")
+                    HStack {
+                        Image(systemName: "tortoise")
+                        Slider(value: $systemRate, in: AVSpeechUtteranceMinimumSpeechRate...AVSpeechUtteranceMaximumSpeechRate) { editing in
+                            if !editing { SpeechOutput.systemRate = systemRate }
+                        }
+                        Image(systemName: "hare")
+                    }
+                }
+                Button("iOS の声で試聴") {
+                    SpeechOutput.systemRate = systemRate
+                    previewed = true
+                    voiceIO.stopSpeaking()
+                    voiceIO.speak(Self.sample, using: nil)
+                }
+                Button("標準の速さに戻す") {
+                    systemRate = AVSpeechUtteranceDefaultSpeechRate
+                    SpeechOutput.systemRate = systemRate
+                }
+            } header: {
+                Text("iOS の声")
+            } footer: {
+                Text("Gemini の API キーが無いときは、iOS の声で読み上げます。")
             }
 
             Section {
@@ -92,7 +134,7 @@ struct VoiceSettingsView: View {
                 }
             }
         }
-        .navigationTitle("声の設定")
+        .navigationTitle("エージェントの設定")
         .navigationBarTitleDisplayMode(.inline)
         // 試聴したときだけ止める。エージェントの読み上げ（確認の質問など）は止めない。
         .onDisappear { if previewed { voiceIO.stopSpeaking() } }

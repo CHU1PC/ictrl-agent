@@ -15,7 +15,7 @@ final class AgentSession: ObservableObject {
     static let shared = AgentSession()
 
     struct Entry: Identifiable {
-        enum Role { case user, assistant, action, notice, error }
+        enum Role { case user, assistant, action, notice, error, timing }
         let id = UUID()
         let role: Role
         let text: String
@@ -43,9 +43,25 @@ final class AgentSession: ObservableObject {
     private var loopTask: Task<Void, Never>?
     private var confirmation: CheckedContinuation<Bool, Never>?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
-    private lazy var tools = AgentTools.definitions
-    private lazy var system = Self.makeSystemPrompt()
     private var voiceChanges: AnyCancellable?
+
+    /// 1つの依頼でかかった時間の内訳（遅さの切り分け用）。
+    private struct Timing {
+        let start = Date()
+        var claude: TimeInterval = 0
+        var claudeCalls = 0
+        var tools: TimeInterval = 0
+        var toolCalls = 0
+    }
+    private var timing = Timing()
+    /// 今の会話で使う設定、ツール、システムプロンプト。会話の最初に決めて、会話を消すまで変えない。
+    /// 途中で変えると、キャッシュが外れるうえ、思考ブロックの検証で拒否されることがある。
+    private struct Conversation {
+        let config: AnthropicClient.Config
+        let tools: [[String: Any]]
+        let system: [[String: Any]]
+    }
+    private var conversation: Conversation?
 
     private init() {
         runnerPaired = runner.isPaired
@@ -54,6 +70,7 @@ final class AgentSession: ObservableObject {
         voice.onStopWord = { [weak self] in self?.handleStopWord() }
         voice.onFailure = { [weak self] message in self?.fail(message, spoken: message) }
         voice.onNotice = { [weak self] message in self?.noteOnce(message) }
+        voice.onTiming = { [weak self] text in self?.entries.append(Entry(role: .timing, text: text)) }
         // 画面は session だけを見るので、音声の状態の変化もここから流す。
         voiceChanges = voice.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
     }
@@ -154,9 +171,11 @@ final class AgentSession: ObservableObject {
         guardrail.revoke()
         // ループの開始を待たずに印を立てる。その間に来た発話で2本目を走らせない。
         isRunning = true
+        timing = Timing()
         entries.append(Entry(role: .user, text: trimmed))
         messages.append(["role": "user", "content": trimmed])
-        let client = AnthropicClient(apiKey: key)
+        if messages.count == 1 || conversation == nil { conversation = Self.makeConversation() }
+        let client = AnthropicClient(apiKey: key, config: conversation!.config)
         loopTask = Task { await self.run(client: client) }
     }
 
@@ -178,6 +197,7 @@ final class AgentSession: ObservableObject {
         guard !isRunning else { return }
         messages.removeAll()
         entries.removeAll()
+        conversation = nil
         guardrail = RiskGuard()
     }
 
@@ -193,13 +213,21 @@ final class AgentSession: ObservableObject {
         defer {
             isRunning = false
             endKeepAlive()
+            entries.append(Entry(role: .timing, text: String(
+                format: "合計 %.1f秒：Claude %.1f秒（%d回）、操作 %.1f秒（%d回）",
+                Date().timeIntervalSince(timing.start), timing.claude, timing.claudeCalls, timing.tools, timing.toolCalls)))
         }
 
         for _ in 0..<Self.maxSteps {
             if Task.isCancelled { return stopped() }
             let response: [String: Any]
             do {
-                response = try await client.send(system: system, tools: tools, messages: messages)
+                let sent = Date()
+                response = try await client.send(system: conversation?.system ?? [], tools: conversation?.tools ?? [], messages: messages)
+                let elapsed = Date().timeIntervalSince(sent)
+                timing.claude += elapsed
+                timing.claudeCalls += 1
+                entries.append(Entry(role: .timing, text: String(format: "Claude %.1f秒", elapsed)))
             } catch {
                 if Task.isCancelled { return stopped() }
                 let spoken = (error as? AnthropicClient.Failure)?.spokenText ?? "Claude へのリクエストが失敗しました。"
@@ -269,6 +297,13 @@ final class AgentSession: ObservableObject {
             return toolResult(id: id, text: reason, isError: true)
         }
         let prepared = AgentTools.prepare(method: name, input: input)
+        let started = Date()
+        defer {
+            let elapsed = Date().timeIntervalSince(started)
+            timing.tools += elapsed
+            timing.toolCalls += 1
+            entries.append(Entry(role: .timing, text: String(format: "操作 %@ %.2f秒", name, elapsed)))
+        }
         entries.append(Entry(role: .action, text: Self.describe(name, prepared)))
         do {
             let result = try await runner.call(name, prepared, timeout: 40)
@@ -363,16 +398,28 @@ final class AgentSession: ObservableObject {
 
     // MARK: - System prompt
 
-    private static let agentInstructions = """
+    private static let baseInstructions = """
     You are a voice assistant that operates this iPhone for the user through the iCTRL tools. \
     The user speaks Japanese, and every text you write is read aloud. Reply in Japanese, in one or two short spoken sentences, with no markdown, lists, or URLs.
 
-    Call device_info once at the start of a task. Speak only at meaningful milestones, not before every tool call. \
-    To see the screen, prefer page_source with visible_only true or find_element; use screenshot only when the tree is missing what you need.
+    Speak only at meaningful milestones, not before every tool call.
 
+    Every tool call is a full round trip and the user is waiting, so use as few as you can: \
+    to press something you can name, call find_and_tap or tap_element with its label directly instead of reading the screen first; \
+    to open an app, call launch_app directly; \
+    do not re-read the screen after an action just to confirm it, since actions wait for the screen to settle and report the result; \
+    when several calls do not depend on each other, make them in the same response. \
+    Call device_info only when you need screen coordinates, and only once per conversation. \
+    To see the screen, prefer page_source with visible_only true; use screenshot only when the tree is missing what you need.
+    """
+
+    private static let confirmInstructions = """
     Before any action that sends or posts a message, makes a purchase or payment, deletes data, or changes a setting or account, call confirm_with_user with one sentence saying exactly what will happen, and continue only if it returns approved true. \
     An approval covers only the next few actions, so perform the approved action right away. \
-    If a tool result says Blocked, call confirm_with_user before trying again. \
+    If a tool result says Blocked, call confirm_with_user before trying again.
+    """
+
+    private static let commonRules = """
     Never type passwords, passcodes, or payment details; ask the user to enter them by hand. \
     If the request is ambiguous, ask the user instead of guessing. When the task is done, say so in one sentence.
 
@@ -380,12 +427,15 @@ final class AgentSession: ObservableObject {
     You call the same methods directly as tools, so ignore its instructions about curl, shells, files, grep, the $I helper, pairing, envelopes, tickets, updating the skill, and the config, reset, logs and stream_ticket methods.
     """
 
-    private static func makeSystemPrompt() -> [[String: Any]] {
-        var text = agentInstructions
+    /// 会話の最初に、その時点の設定とメモで、ツールとシステムプロンプトを組み立てる。
+    private static func makeConversation() -> Conversation {
+        let tools = AgentTools.definitions
+        var text = baseInstructions + "\n" + confirmInstructions + "\n" + commonRules
         if let url = Bundle.main.url(forResource: "SKILL", withExtension: "md"),
            let manual = try? String(contentsOf: url, encoding: .utf8) {
             text += "\n\n" + manual
         }
-        return [["type": "text", "text": text]]
+        let system: [[String: Any]] = [["type": "text", "text": text]]
+        return Conversation(config: .stored, tools: tools, system: system)
     }
 }

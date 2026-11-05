@@ -39,7 +39,7 @@ struct AgentView: View {
                 NavigationLink {
                     VoiceSettingsView()
                 } label: {
-                    Image(systemName: "speaker.wave.2")
+                    Image(systemName: "slider.horizontal.3")
                 }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -130,6 +130,8 @@ struct AgentView: View {
             Text(entry.text)
         case .action:
             Label(entry.text, systemImage: "hand.tap").font(.caption.monospaced()).foregroundColor(.secondary)
+        case .timing:
+            Label(entry.text, systemImage: "stopwatch").font(.caption2.monospaced()).foregroundColor(.secondary)
         case .notice:
             Text(entry.text).font(.caption).foregroundColor(.secondary)
         case .error:
