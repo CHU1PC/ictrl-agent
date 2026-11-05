@@ -10,6 +10,7 @@ swiftc -module-cache-path "$tmp/module-cache" \
     "$root/iCTRLApp/Agent/SpeechText.swift" \
     "$root/iCTRLApp/Agent/AgentTools.swift" \
     "$root/iCTRLApp/Agent/ApprovalMode.swift" \
+    "$root/iCTRLApp/Agent/AgentMemory.swift" \
     "$root/Tests/VoiceAgent/main.swift" \
     -o "$tmp/voice-agent-tests"
 "$tmp/voice-agent-tests"
@@ -23,4 +24,5 @@ wired iCTRLApp/Agent/SpeechOutput.swift 'decoder.samples(chunk)'
 wired iCTRLApp/Agent/SpeechOutput.swift 'SpeechText.sentences(text)'
 wired iCTRLApp/Agent/AgentSession.swift 'ConfirmationAnswer.interpret(text)'
 wired iCTRLApp/Agent/AgentSession.swift 'approval.needsUser(summary)'
+wired iCTRLApp/Agent/AgentSession.swift 'AgentMemory.execute(name, input: input)'
 echo "VoiceAgent: call sites wired"

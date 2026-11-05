@@ -61,5 +61,6 @@ check(!ApprovalMode.automatic.needsUser("商品を購入します"), "automatic 
 check(ApprovalMode.askForPaymentsAndDeletes.needsUser("Amazon で商品を購入します"), "purchase asks")
 check(ApprovalMode.askForPaymentsAndDeletes.needsUser("写真を削除します"), "delete asks")
 check(!ApprovalMode.askForPaymentsAndDeletes.needsUser("母に LINE でメッセージを送信します"), "send is automatic")
+check(AgentMemory.promptSection("").contains("(empty)"), "empty memory section")
 
 print("VoiceAgent: \(checks) checks passed")

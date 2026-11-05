@@ -35,8 +35,9 @@ struct VoiceSettingsView: View {
                     ForEach(ApprovalMode.allCases) { Text($0.title).tag($0) }
                 }
                 .onChange(of: approval) { ApprovalMode.stored = $0 }
+                NavigationLink("メモ（覚えたこと）") { MemoryView() }
             } header: {
-                Text("操作の確認")
+                Text("操作の確認とメモ")
             } footer: {
                 Text("全部自動では、送信、購入、削除も確認なしで実行します。誤操作を止められないので、支払いのできるアプリを使うときは「支払いと削除だけ聞く」にしてください。変更は次の会話から効きます。")
             }
