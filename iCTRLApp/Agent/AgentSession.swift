@@ -32,7 +32,8 @@ final class AgentSession: ObservableObject {
 
     let voice = VoiceIO()
 
-    static let wakeWords = ["ジャービス", "じゃーびす", "Jarvis", "jarvis", "JARVIS"]
+    /// 聞き取りが「ジャビス」と書くことがあるので、それも受け付ける。
+    static let wakeWords = ["ジャービス", "じゃーびす", "ジャビス", "じゃびす", "Jarvis", "jarvis", "JARVIS"]
     private static let awakeWindow: TimeInterval = 10
     private static let maxSteps = 60
     private static let stopWords = ["止めて", "とめて", "ストップ", "やめて", "中止"]
