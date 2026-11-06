@@ -63,6 +63,16 @@
 	<array>
 		<string>_ictrl._tcp</string>
 	</array>
+	<!-- Voice agent: the microphone stays open during a conversation, which
+	     keeps the app alive while the agent drives other apps. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>The voice agent listens to your spoken instructions.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>The voice agent turns your speech into text instructions.</string>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>ictrl</string>

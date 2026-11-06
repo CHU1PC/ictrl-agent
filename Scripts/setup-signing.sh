@@ -44,4 +44,4 @@ cat > "$OUT" <<CONF
 DEVELOPMENT_TEAM = $TEAM
 ICTRL_BUNDLE_PREFIX = $PREFIX
 CONF
-echo "🔑 Config/Local.xcconfig: team $TEAM, bundle ids $PREFIX.ictrl[.uitests]"
+echo "🔑 Config/Local.xcconfig: team $TEAM, bundle ids $PREFIX.app, $PREFIX.engine"

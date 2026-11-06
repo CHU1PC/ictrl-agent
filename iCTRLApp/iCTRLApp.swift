@@ -25,8 +25,8 @@ struct iCTRLApp: App {
     var body: some Scene {
         WindowGroup {
             NavigationStack {
-                SettingsView()
-                    .environmentObject(appState)
+                // 開いたらすぐエージェント。DDI やランナーの設定は歯車の奥にある。
+                AgentView()
             }
             .environmentObject(appState)
             .environmentObject(runnerAdmin)

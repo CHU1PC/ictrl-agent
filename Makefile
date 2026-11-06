@@ -87,6 +87,8 @@ ipa: build
 	APP="$(BUILD_DIR)/$(RUNNER_APP)"; PLIST="$$APP/Info.plist"; PB=/usr/libexec/PlistBuddy; \
 	rm -f "$$APP"/AppIcon*.png; \
 	cp Config/RunnerIcon/*.png "$$APP/"; \
+	$$PB -c "Delete :CFBundleDisplayName" "$$PLIST" 2>/dev/null || true; \
+	$$PB -c "Add :CFBundleDisplayName string 'iPhone Use Engine'" "$$PLIST"; \
 	$$PB -c "Delete :CFBundleIcons" "$$PLIST" 2>/dev/null || true; \
 	$$PB -c "Delete :CFBundleIcons~ipad" "$$PLIST" 2>/dev/null || true; \
 	$$PB -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles array" "$$PLIST"; \
