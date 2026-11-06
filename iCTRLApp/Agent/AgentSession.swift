@@ -74,6 +74,8 @@ final class AgentSession: ObservableObject {
         voice.onTiming = { [weak self] text in self?.entries.append(Entry(role: .timing, text: text)) }
         // 画面は session だけを見るので、音声の状態の変化もここから流す。
         voiceChanges = voice.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        // 端末内の声は、モデルの読み込みに時間がかかるので先に始めておく。
+        if VoiceChoice.current == .local { LocalVoice.shared.warmUp() }
     }
 
     // MARK: - Settings

@@ -13,7 +13,7 @@ swiftc -module-cache-path "$tmp/module-cache" \
     "$root/iCTRLApp/Agent/AgentMemory.swift" \
     "$root/Tests/VoiceAgent/main.swift" \
     -o "$tmp/voice-agent-tests"
-"$tmp/voice-agent-tests"
+"$tmp/voice-agent-tests" "$root/iCTRLApp/Agent/Readings.json"
 
 # The parsers are only useful if the app calls them; a refactor that drops a call still builds.
 wired() {

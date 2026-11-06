@@ -15,10 +15,18 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
 
+packages:
+  # 端末内の読み上げ（Irodori-TTS の Core ML 版、MIT）。モデル本体はアプリから別に取得する。
+  IrodoriTTS:
+    url: https://github.com/Corvelis/irodori-tts-coreml
+    exactVersion: 0.2.0
+
 targets:
   iCTRL:
     type: application
     platform: iOS
+    # 端末内の声に使う軽量INT8版のモデルが iOS 18 以上を要る。
+    deploymentTarget: "18.0"
     sources:
       - path: iCTRLApp
       - path: iCTRLKit
@@ -36,6 +44,7 @@ targets:
       # in the repo tree, so SPM cannot resolve it by URL.
       - framework: Frameworks/IDevice.xcframework
         embed: false
+      - package: IrodoriTTS
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(ICTRL_BUNDLE_PREFIX).app"

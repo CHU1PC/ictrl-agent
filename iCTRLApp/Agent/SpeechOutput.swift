@@ -1,8 +1,9 @@
 import AVFoundation
 
-/// 読み上げ。文ごとに Gemini から PCM をストリーミングで受け取り、1つの再生ノードに順に積む。
+/// 読み上げ。文ごとに声（端末内か Gemini）から PCM をストリーミングで受け取り、1つの再生ノードに順に積む。
 ///
 /// - 先に頼むのは、再生中の文と次の数文だけにする（長い返事で利用上限に当たらないように）。
+/// - 再生ノードは 48kHz にする。Gemini の 24kHz の音は 48kHz に直してから積む。
 /// - 前の文を受け取り終えたら、すぐ次の文を同じノードに積むので、文の間に隙間ができない。
 /// - 音が1つも届かなかった文は、iOS の声で読む。
 /// - isSpeaking は、実際に音を出している間だけ true にする。
@@ -10,7 +11,7 @@ import AVFoundation
 final class SpeechOutput: NSObject, ObservableObject {
     @Published private(set) var isSpeaking = false
 
-    /// Gemini の声を使えなかったときなどの知らせ。
+    /// 声を使えなかったときなどの知らせ。
     var onNotice: ((String) -> Void)?
     /// 再生の前に呼ぶ。聞き取りをしていないときは、ここで音声セッションを開いてもらう。
     var prepareSession: (() throws -> Void)?
@@ -24,20 +25,20 @@ final class SpeechOutput: NSObject, ObservableObject {
 
     private final class Job {
         let text: String
-        let tts: GeminiTTS?
+        let source: VoiceSource?
         private(set) var stream: AsyncThrowingStream<Data, Error>?
-        /// Gemini に頼んだ時刻。
+        /// 声に頼んだ時刻。
         private(set) var requestedAt: Date?
 
-        init(text: String, tts: GeminiTTS?) {
+        init(text: String, source: VoiceSource?) {
             self.text = text
-            self.tts = tts
+            self.source = source
         }
 
-        func start() {
-            if stream == nil, let tts {
+        @MainActor func start() {
+            if stream == nil, let source {
                 requestedAt = Date()
-                stream = tts.stream(text)
+                stream = source.stream(text)
             }
         }
     }
@@ -55,7 +56,8 @@ final class SpeechOutput: NSObject, ObservableObject {
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
-    private let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: GeminiTTS.sampleRate, channels: 1, interleaved: false)!
+    private static let outputRate: Double = 48_000
+    private let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: outputRate, channels: 1, interleaved: false)!
     private var connected = false
     /// 積んだがまだ鳴らし終えていない断片の数。エンジンが作り直されたら、その時点の分は捨てる。
     private var pendingBuffers = 0
@@ -72,9 +74,9 @@ final class SpeechOutput: NSObject, ObservableObject {
         observe()
     }
 
-    func speak(_ text: String, using tts: GeminiTTS?) {
+    func speak(_ text: String, using source: VoiceSource?) {
         for sentence in SpeechText.sentences(text) {
-            queue.append(Job(text: sentence, tts: tts))
+            queue.append(Job(text: sentence, source: source))
         }
         prefetch()
         if loopTask == nil {
@@ -110,17 +112,17 @@ final class SpeechOutput: NSObject, ObservableObject {
                 let job = queue.removeFirst()
                 job.start()
                 prefetch()
-                if let stream = job.stream {
-                    switch await play(stream, job: job, generation: generation) {
+                if let stream = job.stream, let source = job.source {
+                    switch await play(stream, job: job, rate: source.sampleRate, generation: generation) {
                     case .played:
                         break
                     case .failedBeforeAudio(let error):
                         guard generation == self.generation else { return }
-                        onNotice?("Gemini の声を使えなかったので、iOS の声で読み上げます: \(error.localizedDescription)")
+                        onNotice?("\(source.name)を使えなかったので、iOS の声で読み上げます: \(error.localizedDescription)")
                         await drain()
                         await speakWithSystemVoice(job.text)
                     case .failedMidway(let error):
-                        onNotice?("Gemini の読み上げが途中で切れました: \(error.localizedDescription)")
+                        onNotice?("\(source.name)の読み上げが途中で切れました: \(error.localizedDescription)")
                     }
                 } else {
                     await drain()
@@ -138,8 +140,9 @@ final class SpeechOutput: NSObject, ObservableObject {
         onIdle?()
     }
 
-    private func play(_ stream: AsyncThrowingStream<Data, Error>, job: Job, generation: Int) async -> Outcome {
+    private func play(_ stream: AsyncThrowingStream<Data, Error>, job: Job, rate: Double, generation: Int) async -> Outcome {
         var decoder = PCMDecoder()
+        var upsampler = rate < Self.outputRate ? Upsampler2x() : nil
         var played = false
         let turn = Date()
         var firstChunk: Date?
@@ -148,13 +151,15 @@ final class SpeechOutput: NSObject, ObservableObject {
             for try await chunk in stream {
                 guard generation == self.generation else { return .played }
                 if firstChunk == nil { firstChunk = Date() }
-                let samples = decoder.samples(chunk)
+                var samples = decoder.samples(chunk)
                 sampleCount += samples.count
+                if upsampler != nil { samples = upsampler!.process(samples) }
                 if !samples.isEmpty, schedule(samples) { played = true }
             }
-            if let requested = job.requestedAt, let first = firstChunk {
+            // 止めた後に、途中までの時間を記録しない。
+            if generation == self.generation, let requested = job.requestedAt, let first = firstChunk {
                 // 受信が音声の長さより長ければ、生成が再生に追いつかず、途中で音が途切れている。
-                let audio = Double(sampleCount) / GeminiTTS.sampleRate
+                let audio = Double(sampleCount) / rate
                 let waited = max(0, first.timeIntervalSince(turn))
                 onTiming?(String(format: "声: 最初の音まで %.1f秒（順番が来てから %.1f秒待ち）、受信 %.1f秒 / 音声 %.1f秒「%@」",
                                  first.timeIntervalSince(requested), waited, Date().timeIntervalSince(requested), audio,

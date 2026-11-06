@@ -114,12 +114,16 @@ final class VoiceIO: NSObject, ObservableObject {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
-    /// 読み上げる。Gemini のキーがあれば、1文ずつ Gemini の声にする。
-    /// tts を渡すと、保存された設定の代わりにそれを使う（声の試聴用）。
-    func speak(_ text: String, using tts: GeminiTTS? = GeminiTTS.configured()) {
+    /// 読み上げる。設定で選んだ声（端末内、Gemini、iOS）で、1文ずつ読む。
+    func speak(_ text: String) {
+        speak(text, using: VoiceSource.configured())
+    }
+
+    /// 保存された設定の代わりに、渡した声で読む（声の試聴用）。nil は iOS の声。
+    func speak(_ text: String, using source: VoiceSource?) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        output.speak(trimmed, using: tts)
+        output.speak(trimmed, using: source)
     }
 
     func stopSpeaking() {

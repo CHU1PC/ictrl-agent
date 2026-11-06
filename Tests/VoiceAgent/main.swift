@@ -12,6 +12,15 @@ check(SpeechText.sentences("設定アプリを開きました。Wi-Fi の画面�
 check(SpeechText.sentences("了解です。送信しますか？ OK") == ["了解です。", "送信しますか？OK"], "short tail merged")
 check(SpeechText.sentences("  \n ") == [], "blank text")
 
+// Readings: English words become kana for the on-device voice; longer keys win, word edges only.
+let readings = ["App Store": "アップストア", "Apple": "アップル", "Safari": "サファリ", "LINE": "ライン"]
+check(SpeechText.applyReadings("Safariで検索します。", readings) == "サファリで検索します。", "replace word")
+check(SpeechText.applyReadings("App Storeを開きます", readings) == "アップストアを開きます", "longer key first")
+check(SpeechText.applyReadings("line で送ります", readings) == "ライン で送ります", "case-insensitive")
+check(SpeechText.applyReadings("Pineapple と Safaris", readings) == "Pineapple と Safaris", "inside a word is kept")
+let bundled = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))) as! [String: String]
+check(SpeechText.applyReadings("Bluetoothをオンにして、YouTubeを開きます。", bundled) == "ブルートゥースをオンにして、ユーチューブを開きます。", "bundled dictionary")
+
 // PCM: 16-bit little-endian, odd-length chunks carried over without shifting samples.
 var decoder = PCMDecoder()
 let samples: [Int16] = [0, 16384, -16384, 32767, -32768]
@@ -22,6 +31,11 @@ let rest = decoder.samples(bytes.dropFirst(3))
 let decoded = first + rest
 check(decoded.count == samples.count, "odd split keeps every sample")
 check(decoded == samples.map { Float($0) / 32768 }, "odd split keeps sample values")
+
+// Upsampling 24 kHz to 48 kHz: midpoints between samples, continuous across chunk edges.
+var upsampler = Upsampler2x()
+let up = upsampler.process([0, 1]) + upsampler.process([0.5])
+check(up == [0, 0, 0.5, 1, 0.75, 0.5], "upsample with midpoints across chunks")
 
 // SSE: audio deltas, a JSON split over two data lines, other events ignored, error events thrown.
 var parser = SSEAudioParser()

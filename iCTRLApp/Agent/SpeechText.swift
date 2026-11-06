@@ -18,6 +18,20 @@ enum SpeechText {
         return result
     }
 
+    /// 英単語をカナに置き換える（端末内の声は Safari などを読み違えるため）。
+    /// 長い語から順に、英字に挟まれていない所だけを、大小を区別せずに置き換える。
+    /// GPU 機の検証（irodori-eval の gen.py）も同じ規則で同じ辞書を使う。
+    static func applyReadings(_ text: String, _ readings: [String: String]) -> String {
+        var result = text
+        for word in readings.keys.sorted(by: { $0.count > $1.count }) {
+            let pattern = "(?<![A-Za-z])" + NSRegularExpression.escapedPattern(for: word) + "(?![A-Za-z])"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+            let template = NSRegularExpression.escapedTemplate(for: readings[word]!)
+            result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: template)
+        }
+        return result
+    }
+
     private static func append(_ result: inout [String], _ piece: String) {
         let trimmed = piece.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -42,6 +56,23 @@ struct PCMDecoder {
         for i in 0..<out.count {
             let value = Int16(bitPattern: UInt16(bytes[2 * i]) | UInt16(bytes[2 * i + 1]) << 8)
             out[i] = Float(value) / 32768
+        }
+        return out
+    }
+}
+
+/// 24kHz の音を 48kHz に直す（Gemini の声を、端末内の声と同じ再生ノードで鳴らすため）。
+/// 隣り合うサンプルの中点を挟む。断片の境目でも、前の断片の最後のサンプルから続ける。
+struct Upsampler2x {
+    private var last: Float?
+
+    mutating func process(_ samples: [Float]) -> [Float] {
+        var out: [Float] = []
+        out.reserveCapacity(samples.count * 2)
+        for sample in samples {
+            out.append(((last ?? sample) + sample) / 2)
+            out.append(sample)
+            last = sample
         }
         return out
     }
