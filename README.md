@@ -271,7 +271,7 @@ often from the phone itself, so the work went into speed, robustness and making
 every response usable by a model.
 
 | | WebDriverAgent (estimated from its source and defaults, not measured) | iCTRL |
-|---|---|---|
+| --- | --- | --- |
 | **Taps** | `XCUIElement`/`XCUICoordinate.tap`, which waits for the app to go idle before and after (`waitForIdleTimeout` 10s by default). *Estimated* **~0.5–1s** per tap | Synthesized touch events with no idle waits: **~280ms median** (measured) |
 | **Reading long lists** | A snapshot limited to depth 50 (`snapshotMaxDepth`). That caps nesting but not breadth, so every off-screen row of a long feed is still serialized. *Estimated* **several seconds** per read on a long-scrolled X timeline, sometimes long enough to time out | Snapshots bounded in depth *and* breadth on the device, keeping only what is on screen: **p50 416ms / p90 593ms across 8 apps, never over 1s** (measured). Element lookups use the same bounded walk (~0.3–1s) |
 | **When the tree is empty** (web views, custom-drawn text, sparse recycling lists) | — | On-device **Vision OCR** (`screen_text`, ~0.5s) returns text with tappable point coordinates. `page_source` measures its own coverage and falls back to OCR by itself |
@@ -296,7 +296,7 @@ conditions hold. Sort out both before anything else:
 developer account work:
 
 | You have | How |
-|---|---|
+| --- | --- |
 | Free Apple ID | The **latest SideStore** signs and installs it → [A](#a-free-apple-id--sidestore) |
 | Paid developer account | Sign with [`Scripts/sign-ipa.sh`](Scripts/sign-ipa.sh) → [B](#b-paid-developer-account--scriptssign-ipash), or run from Xcode → [C](#c-paid-developer-account--xcode) |
 
@@ -312,7 +312,7 @@ moment it launches**. Use one of the routes above, which handle this.
 reboot unmounts it, so remount after every restart:
 
 | You have | How |
-|---|---|
+| --- | --- |
 | A Mac with Xcode | Connect the phone once; Xcode mounts it automatically → [Option 1](#option-1--xcode) |
 | No Mac | [StikDebug](#option-2--stikdebug) **or** the [iCTRL app](#option-3--the-ictrl-app) mounts it on the device. You need only one; with a free Apple ID there is room for only one ([why](#a-free-apple-id--sidestore)) |
 
@@ -378,7 +378,7 @@ Scripts/sign-ipa.sh -i iCTRLUITests-Runner.ipa
 With no other options, the script picks everything itself:
 
 | Option | Default |
-|---|---|
+| --- | --- |
 | `-t TEAMID` | `$DEVELOPMENT_TEAM`, then `Config/Local.xcconfig`, then the Xcode project's build settings |
 | `-p PROFILE` | the installed development profile for that team that covers the package's bundle id. An exact App ID wins over a wildcard, then the one that expires last. `-p` takes a `.mobileprovision` path, a profile UUID or a profile name. |
 | `-s IDENTITY` | the keychain signing identity whose certificate is in that profile. `-s` takes a name or SHA-1 (`security find-identity -v -p codesigning`). |
@@ -530,7 +530,7 @@ notifications instead. **Long-press a notification** (or swipe left → *View*)
 to get its menu:
 
 | Notification | Menu |
-|---|---|
+| --- | --- |
 | **🟢 iCTRL Server Ready** — always present while the server runs; refreshes silently every 5 minutes. Its first line says who can reach the phone: **🔒 This device only**, **🌐 LAN reachable**, **📡 Nearby discoverable**, or why nearby isn't ready yet (e.g. *turn on Wi-Fi*, *allow Local Network*) | **🌐 Enable Remote Access** / **🔒 Disable Remote Access**, **📡 Enable Nearby Discovery** / **📴 Disable Nearby Discovery** (with remote access on), **🛑 Stop Server** |
 | **Pairing request** from a client | **✅ Allow** / **⛔️ Deny** |
 | **⏹️ iCTRL Server Stopped** | **📋 Copy Logs** |
@@ -551,7 +551,7 @@ to get its menu:
 ### Who can reach it: visibility
 
 | Setting | Reachable from | Announced (Bonjour) |
-|---|---|---|
+| --- | --- | --- |
 | 🔒 **This device only** (default) | apps on the phone, a computer over USB | nowhere |
 | 🌐 **LAN** (remote access on) | anyone on the same network who knows the address | nowhere |
 | 📡 **LAN + nearby** (nearby discovery on) | the above, plus nearby Apple devices over peer-to-peer Wi-Fi (AWDL) | on the LAN and over AWDL |
@@ -642,7 +642,7 @@ and drive the device from there.
 All methods are JSON-RPC 2.0 (`POST /rpc`). Highlights:
 
 | Group | Methods |
-|---|---|
+| --- | --- |
 | **Touch** | `tap`, `double_tap`, `long_press`, `tap_element`, `find_and_tap`, `swipe`, `scroll`, `scroll_to_element`, `drag`, `page` |
 | **Text** | `type` (with `submit`/`clear`), `clear_text` |
 | **Read** | `screenshot`, `page_source`, `find_element`, `screen_text` (Vision OCR) |
@@ -844,7 +844,7 @@ why it changed.
 This project would not exist without the following work.
 
 | Project | Used for | License |
-|---|---|---|
+| --- | --- | --- |
 | [jkcoxson/idevice](https://github.com/jkcoxson/idevice) | The Rust library doing all the real protocol work behind `iCTRLApp/DDI` — RSD tunnel, lockdownd, image mounter. Fetched as an xcframework by `Scripts/fetch-idevice.sh`. | MIT |
 | [StikDebug](https://github.com/StikDebug/StikDebug) (formerly StikJIT) | **Inspired iCTRL's DDI mounting.** Mounting the Developer Disk Image from the device itself, with no privileged entitlement, is StikDebug's idea. `DDIMounter.swift` is an independent implementation against the `idevice` API — no code is copied. | AGPL-3.0 |
 | [StosVPN](https://github.com/SideStore/StosVPN) / [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN) | Provides the local tunnel that makes the device's own `remoted` service routable at `10.7.0.1:49152`, which is what lets an on-device app reach its own lockdownd at all. LocalDevVPN is a maintained fork of StosVPN and is what ships on the App Store. | NOASSERTION — check upstream before reuse |
